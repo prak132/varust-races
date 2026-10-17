@@ -122,6 +122,7 @@ impl Session {
             ClientMsg::Ranked { car } => self.join_ranked(car).await,
             ClientMsg::Ready(ready) => self.to_race(|slot| RaceCmd::Ready { slot, ready }).await,
             ClientMsg::Settings(settings) => self.to_race(|slot| RaceCmd::Settings { slot, settings }).await,
+            ClientMsg::Map(map) => self.to_race(|slot| RaceCmd::Map { slot, map }).await,
             ClientMsg::Rematch => match &self.place {
                 Place::Soccer { room, slot } => {
                     let _ = room.tx.send(SoccerCmd::Rematch { slot: *slot }).await;
@@ -225,7 +226,7 @@ impl Session {
                 self.place = Place::Race { room, slot };
                 true
             }
-            None => self.send(&ServerMsg::Error("That race is full or already started".into())),
+            None => self.send(&ServerMsg::Error("That lobby is full".into())),
         }
     }
 

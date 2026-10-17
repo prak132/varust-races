@@ -11,7 +11,7 @@ use sim::events::Event;
 use sim::room::{Settings, Snapshot};
 
 /// bumped whenever a message changes shape; the server turns away other versions
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 /// inputs repeated in every Inputs message
 pub const INPUT_REDUNDANCY: usize = 4;
 /// largest message a client may send
@@ -39,8 +39,10 @@ pub enum ClientMsg {
     /// join the ranked queue (signed-in players only)
     Ranked { car: u8 },
     Ready(bool),
-    /// the host's laps and CPU difficulty
+    /// the host's laps and CPUs
     Settings(Settings),
+    /// the host picks the map for the next race (in the lobby)
+    Map(String),
     /// back to the lobby for another race (host only, once the race is over)
     Rematch,
     Leave,
@@ -68,15 +70,18 @@ pub struct LobbyPlayer {
     pub name: String,
     pub car: u8,
     pub ready: bool,
+    /// joined mid-race: in the next race
+    pub waiting: bool,
 }
 
-/// who's in a race room before the start
+/// who's in a race room before the start, and the race they'll run
 #[cfg_attr(feature = "ts", derive(tsify::Tsify))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Lobby {
     pub players: Vec<LobbyPlayer>,
     pub host: Option<u8>,
     pub settings: Settings,
+    pub map: String,
 }
 
 #[cfg_attr(feature = "ts", derive(tsify::Tsify))]

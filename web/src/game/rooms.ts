@@ -36,7 +36,10 @@ net.on((msg) => {
     online.rankResult = null;
     online.error = null;
     net.inRoom = true;
-  } else if ('Lobby' in msg) online.lobby = msg.Lobby;
+  } else if ('Lobby' in msg) {
+    online.lobby = msg.Lobby;
+    if (online.room) online.room.mapId = msg.Lobby.map;
+  }
   else if ('Queue' in msg) online.queue = msg.Queue;
   else if ('Profile' in msg) online.profile = msg.Profile;
   else if ('RankResult' in msg) online.rankResult = msg.RankResult;

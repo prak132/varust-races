@@ -9,6 +9,8 @@
     <meta name="description" content="VAR Races: arcade racing through the world's cities, against CPUs or friends online." />
     <title>VAR Races</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- the simulation downloads alongside the scripts, not after them -->
+    <link rel="preload" href="/src/wasm/pkg/wasm_bg.wasm" as="fetch" type="application/wasm" crossorigin />
   </head>
   <body>
     <canvas id="world"></canvas>

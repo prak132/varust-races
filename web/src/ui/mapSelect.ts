@@ -1,15 +1,13 @@
-// Choosing a track: tabs for circuits, sprints and battle arenas, a grid of map cards, and the
-// view to race in (overhead or first person). Hosting online, Create asks the server for a room.
+// Choosing a track for single player: tabs for circuits, sprints and battle arenas, a grid of
+// map cards, and the view to race in (overhead or first person).
 import type { Screen } from '../app';
 import { asset } from '../assets';
 import * as audio from '../audio';
 import { button, h } from '../dom';
 import { allMaps } from '../game/backdrops';
-import { online } from '../game/rooms';
-import { net } from '../net';
 import { nav } from '../nav';
 import { pref, setPref } from '../prefs';
-import type { MapDef, MapKind, ServerMsg } from '../wasm';
+import type { MapDef, MapKind } from '../wasm';
 import { card, cardTitle, centered, kicker, smallButton } from './cards';
 
 const TABS: [MapKind, string, string][] = [
@@ -27,14 +25,10 @@ export class MapSelectScreen implements Screen {
   private readonly tabs: HTMLButtonElement[] = [];
   private readonly grid = h('div.cards');
   private readonly note = h('div.note');
-  private readonly kickerEl: HTMLElement;
-  private readonly stop: (() => void) | null = null;
-  private creating = false;
 
-  constructor(private readonly hosting: false | 'public' | 'private') {
+  constructor() {
     audio.playMusic('music_title');
     this.selected = lastMap;
-    this.kickerEl = kicker(!hosting ? 'SINGLE PLAYER' : hosting === 'public' ? 'HOST A PUBLIC RACE' : 'HOST A PRIVATE RACE');
     TABS.forEach(([kind, label]) => this.tabs.push(smallButton(label, () => this.showTab(kind))));
     const view = smallButton(viewText(), () => {
       setPref('firstPerson', !pref('firstPerson'));
@@ -42,23 +36,19 @@ export class MapSelectScreen implements Screen {
     });
     view.style.minWidth = '230px';
     this.el = centered(card(
-      this.kickerEl,
+      kicker('SINGLE PLAYER'),
       h('div.row', { style: { justifyContent: 'space-between', flexWrap: 'nowrap' } }, cardTitle('CHOOSE A TRACK', 40), h('div.tabs', null, ...this.tabs)),
       h('div.scroll', null, this.grid),
       this.note,
       h('div.card-buttons', null,
-        smallButton('Back', () => (hosting ? void nav.multiplayer() : void nav.menu())),
+        smallButton('Back', () => void nav.menu()),
         h('div.spacer'),
         view,
-        button(hosting ? 'Create' : 'Next', () => this.go()),
+        button('Next', () => this.go()),
       ),
     ));
     this.el.querySelector<HTMLElement>('.card-panel')!.classList.add('wide');
     this.showTab(this.map(this.selected).kind);
-    if (hosting) {
-      this.stop = net.on((msg) => this.message(msg));
-      net.connect();
-    }
   }
 
   private map(id: string): MapDef {
@@ -103,32 +93,7 @@ export class MapSelectScreen implements Screen {
 
   private go(): void {
     lastMap = this.selected;
-    if (!this.hosting) {
-      void nav.localLobby(this.selected);
-      return;
-    }
-    // the server makes the room; we move on once we're in it
-    if (this.creating) return;
-    if (!net.send({ Create: { visibility: this.hosting === 'public' ? 'Public' : 'Private', map: this.selected, car: pref('car') } })) {
-      this.kickerEl.textContent = 'CONNECTING TO THE SERVER...';
-      return;
-    }
-    this.creating = true;
-    this.kickerEl.textContent = 'CREATING THE RACE...';
-  }
-
-  private message(msg: ServerMsg): void {
-    if (typeof msg !== 'object') return;
-    if ('Joined' in msg && this.creating) void nav.onlineLobby(online.room!.mapId);
-    else if ('Error' in msg) {
-      this.creating = false;
-      this.kickerEl.textContent = msg.Error.toUpperCase();
-      this.kickerEl.classList.add('error');
-    }
-  }
-
-  dispose(): void {
-    this.stop?.();
+    void nav.localLobby(this.selected);
   }
 }
 

@@ -3,7 +3,7 @@
 import type { Controls } from '../input';
 import { pack } from '../input';
 import type { CarFrame } from '../render/world';
-import type { Car, Event, MapDef, Snapshot } from '../wasm';
+import type { Car, Event, MapDef, Settings, Snapshot } from '../wasm';
 import { LocalRace } from '../wasm';
 import { FixedStep, framesOf } from './frames';
 
@@ -43,10 +43,10 @@ export class LocalSource implements RaceSource {
   private now: Snapshot;
   private events: Event[] = [];
 
-  constructor(readonly map: MapDef, private readonly car: number, laps: number, difficulty: number) {
+  constructor(readonly map: MapDef, private readonly car: number, { laps, difficulty, cpus }: Settings) {
     this.race = new LocalRace(map.id, (Math.random() * 2 ** 31) >>> 0);
     this.mySlot = this.race.addPlayer('Player 1', car)!;
-    this.race.setSettings(laps, difficulty);
+    this.race.setSettings(laps, difficulty, cpus);
     this.race.start();
     this.names = this.race.names() as (string | undefined)[];
     this.prev = this.now = this.race.snapshot();

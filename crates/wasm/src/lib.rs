@@ -128,8 +128,8 @@ impl LocalRace {
     }
 
     #[wasm_bindgen(js_name = setSettings)]
-    pub fn set_settings(&mut self, laps: u8, difficulty: u8) {
-        self.room.set_settings(Settings { laps, difficulty });
+    pub fn set_settings(&mut self, laps: u8, difficulty: u8, cpus: bool) {
+        self.room.set_settings(Settings { laps, difficulty, cpus });
     }
 
     pub fn start(&mut self) {

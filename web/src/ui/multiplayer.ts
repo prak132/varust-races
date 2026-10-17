@@ -1,5 +1,6 @@
-// The online menu: ranked (sign in, then find a race), the open public races, hosting a public
-// or private race, and joining a friend's race with its code.
+// The online menu: ranked (sign in, then find a race), the open public lobbies, creating a
+// public or private lobby, and joining a friend's lobby with its code. A lobby lasts: its
+// players race again and again, and the host picks each track there.
 import type { Screen } from '../app';
 import { account, openEmailForm, signInWithGoogle, startAccounts } from '../account';
 import * as audio from '../audio';
@@ -38,8 +39,8 @@ export class MultiplayerScreen implements Screen {
     audio.playMusic('music_title');
     net.connect();
     void startAccounts();
-    const pub = button('Public', () => this.host('public'));
-    const priv = button('Private', () => this.host('private'));
+    const pub = button('Public', () => this.create('Public'));
+    const priv = button('Private', () => this.create('Private'));
     const join = button('Join', () => this.join(this.code.value));
     this.code.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.join(this.code.value);
@@ -50,8 +51,8 @@ export class MultiplayerScreen implements Screen {
       this.kickerEl,
       cardTitle('ONLINE RACE'),
       kicker('RANKED'), this.ranked,
-      kicker('OPEN RACES'), this.rooms,
-      kicker('HOST A RACE'), h('div.row', { style: { flexWrap: 'nowrap' } }, pub, priv),
+      kicker('OPEN LOBBIES'), this.rooms,
+      kicker('CREATE A LOBBY'), h('div.row', { style: { flexWrap: 'nowrap' } }, pub, priv),
       kicker('JOIN WITH A CODE'), h('div.row', { style: { flexWrap: 'nowrap' } }, h('div', { style: { flex: '1' } }, this.code), join),
       h('div.card-buttons', null, smallButton('Back', () => {
         net.disconnect();
@@ -67,8 +68,9 @@ export class MultiplayerScreen implements Screen {
     else if ('Joined' in msg) void nav.onlineLobby(msg.Joined.map);
   }
 
-  private host(kind: 'public' | 'private'): void {
-    if (net.connected) void nav.mapSelect(kind);
+  /** a lobby starts on the classic track; the host picks another in it */
+  private create(visibility: 'Public' | 'Private'): void {
+    net.send({ Create: { visibility, map: 'classic', car: pref('car') } });
   }
 
   private join(code: string): void {
@@ -110,7 +112,7 @@ export class MultiplayerScreen implements Screen {
       return;
     }
     if (!this.list.length) {
-      this.rooms.replaceChildren(row(h('span.grow.muted', { style: { textAlign: 'center' } }, 'No open races. Host one below!')));
+      this.rooms.replaceChildren(row(h('span.grow.muted', { style: { textAlign: 'center' } }, 'No open lobbies. Create one below!')));
       return;
     }
     this.rooms.replaceChildren(...this.list.slice(0, MAX_ROWS).map((r) => row(

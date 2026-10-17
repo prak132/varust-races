@@ -1,6 +1,8 @@
 //! One race room's task: it owns a sim::room::RaceRoom, ticks it at 60 Hz with the players'
 //! inputs, sends everyone a snapshot 30 times a second, runs the ranked queue and rates
-//! ranked results.
+//! ranked results. Other rooms are lobbies that last: after each race everyone goes back to
+//! the lobby, where the host picks the next map. Players joining mid-race wait there for the
+//! next one, in a slot kept for them.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -9,7 +11,7 @@ use std::time::Duration;
 use proto::{encode, Lobby, LobbyPlayer, RankResult, ServerMsg, Visibility};
 use sim::events::Event;
 use sim::maps::{self, MapDef, MapKind};
-use sim::room::{Phase, RaceRoom, Settings, MAX_PLAYERS, TICK_RATE};
+use sim::room::{Phase, RaceRoom, Settings, CPUS, MAX_PLAYERS, SLOTS, TICK_RATE};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::MissedTickBehavior;
 
@@ -24,6 +26,8 @@ pub type Out = mpsc::Sender<Vec<u8>>;
 const RANKED_WAIT: f32 = 20.0;
 const SOLO_WAIT: f32 = 45.0;
 const FULL_WAIT: f32 = 3.0;
+/// seconds on the results before everyone's back in the lobby (the host can go sooner)
+const RESULTS_TIME: f32 = 15.0;
 /// a snapshot every this many ticks (30 Hz)
 const SNAPSHOT_EVERY: u64 = 2;
 /// rooms close after this long, whatever is going on (nobody races for two hours)
@@ -34,6 +38,7 @@ pub enum RaceCmd {
     Leave { slot: u8 },
     Ready { slot: u8, ready: bool },
     Settings { slot: u8, settings: Settings },
+    Map { slot: u8, map: String },
     Rematch { slot: u8 },
     Inputs { slot: u8, last: u32, inputs: Vec<[u8; 2]> },
 }
@@ -42,6 +47,8 @@ struct Member {
     out: Out,
     uid: Option<String>,
     inputs: InputQueue,
+    /// joined mid-race: their name and car, for the next race
+    waiting: Option<(String, u8)>,
 }
 
 struct Task {
@@ -70,7 +77,7 @@ pub fn spawn(hub: &Arc<Hub>, map: &'static MapDef, visibility: Visibility) -> Op
     if visibility == Visibility::Ranked {
         // ranked races start by themselves, with fixed settings
         room.auto_start = false;
-        room.set_settings(Settings { laps: if map.has_laps() { 2 } else { 1 }, difficulty: 1 });
+        room.set_settings(Settings { laps: if map.has_laps() { 2 } else { 1 }, ..Settings::default() });
     }
     let task = Task {
         hub: hub.clone(),
@@ -134,7 +141,8 @@ impl Task {
                     format!("Player {}", self.guests)
                 });
                 let car = car.clamp(1, sim::car::car_count());
-                let slot = self.room.add_player(&name, car);
+                let racing = self.room.phase != Phase::Lobby;
+                let slot = if racing { self.wait_slot() } else { self.room.add_player(&name, car) };
                 if let Some(slot) = slot {
                     let joined = ServerMsg::Joined {
                         code: self.code.clone(),
@@ -143,7 +151,8 @@ impl Task {
                         map: self.room.map.id.to_string(),
                     };
                     let _ = out.try_send(encode(&joined));
-                    self.members.insert(slot, Member { out, uid, inputs: InputQueue::default() });
+                    let waiting = racing.then_some((name, car));
+                    self.members.insert(slot, Member { out, uid, inputs: InputQueue::default(), waiting });
                     self.lobby_changed = true;
                     // a new ranked player resets the "everyone's in" wait
                     self.last_queue_second = None;
@@ -168,15 +177,15 @@ impl Task {
                     self.lobby_changed = true;
                 }
             }
-            RaceCmd::Rematch { slot } => {
-                if self.visibility != Visibility::Ranked && self.room.host() == Some(slot) && self.room.phase == Phase::Over {
-                    self.room.rematch();
-                    for m in self.members.values_mut() {
-                        m.inputs.clear();
-                    }
-                    self.events.clear();
-                    self.broadcast(&ServerMsg::Rematch);
+            RaceCmd::Map { slot, map } => {
+                if self.visibility != Visibility::Ranked && self.room.host() == Some(slot) {
+                    self.room.set_map(maps::get(&map));
                     self.lobby_changed = true;
+                }
+            }
+            RaceCmd::Rematch { slot } => {
+                if self.room.host() == Some(slot) {
+                    self.back_to_lobby();
                 }
             }
             RaceCmd::Inputs { slot, last, inputs } => {
@@ -216,14 +225,44 @@ impl Task {
             self.rated = true;
             self.rate();
         }
+        // (straight away when everyone racing has left, and only late joiners are here)
+        if self.room.phase == Phase::Over && (self.room.phase_time >= RESULTS_TIME || self.room.human_count() == 0) {
+            self.back_to_lobby();
+        }
         self.update_status();
+    }
+
+    /// a finished race: everyone back to the lobby, on the same map (not ranked: it's one race)
+    fn back_to_lobby(&mut self) {
+        if self.visibility == Visibility::Ranked || self.room.phase != Phase::Over {
+            return;
+        }
+        self.room.rematch();
+        for (&slot, m) in self.members.iter_mut() {
+            m.inputs.clear();
+            if let Some((name, car)) = m.waiting.take() {
+                self.room.add_player_at(slot, &name, car);
+            }
+        }
+        self.events.clear();
+        self.broadcast(&ServerMsg::Rematch);
+        self.lobby_changed = true;
+    }
+
+    /// a slot kept for someone joining mid-race (not ranked: that's one race)
+    fn wait_slot(&self) -> Option<u8> {
+        if self.visibility == Visibility::Ranked || self.members.len() >= MAX_PLAYERS {
+            return None;
+        }
+        (CPUS as u8..SLOTS as u8).find(|s| !self.members.contains_key(s))
     }
 
     /// what the hub shows of this room (the room list, ranked matchmaking)
     fn update_status(&self) {
         let mut s = self.status.lock().unwrap();
         s.players = self.members.len() as u8;
-        s.joinable = self.room.joinable();
+        s.joinable = self.room.joinable() || (self.room.phase != Phase::Lobby && self.wait_slot().is_some());
+        s.map = self.room.map.id;
     }
 
     /// the ranked queue: counts down and starts the race by itself
@@ -249,14 +288,22 @@ impl Task {
     }
 
     fn send_lobby(&self) {
+        let racing = self.room.humans().map(|(slot, r)| LobbyPlayer {
+            slot,
+            name: r.name.clone(),
+            car: r.car_number,
+            ready: r.ready,
+            waiting: false,
+        });
+        let waiting = self.members.iter().filter_map(|(&slot, m)| {
+            let (name, car) = m.waiting.clone()?;
+            Some(LobbyPlayer { slot, name, car, ready: false, waiting: true })
+        });
         let lobby = Lobby {
-            players: self
-                .room
-                .humans()
-                .map(|(slot, r)| LobbyPlayer { slot, name: r.name.clone(), car: r.car_number, ready: r.ready })
-                .collect(),
+            players: racing.chain(waiting).collect(),
             host: self.room.host(),
             settings: self.room.settings,
+            map: self.room.map.id.to_string(),
         };
         self.broadcast(&ServerMsg::Lobby(lobby));
     }
@@ -264,7 +311,7 @@ impl Task {
     fn send_snapshot(&mut self) {
         let snapshot = Box::new(self.room.snapshot());
         let events = std::mem::take(&mut self.events);
-        for m in self.members.values() {
+        for m in self.members.values().filter(|m| m.waiting.is_none()) {
             let msg = ServerMsg::Race { snapshot: snapshot.clone(), events: events.clone(), ack: m.inputs.applied };
             // a player whose connection can't keep up misses a snapshot; the next one has it all
             let _ = m.out.try_send(encode(&msg));

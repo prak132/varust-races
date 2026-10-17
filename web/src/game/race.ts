@@ -185,8 +185,10 @@ export class RaceStage implements Stage {
       this.flag.update(delta);
       if (this.flag.done) this.flag = null;
     }
-    // the results, a moment after crossing the line
-    if (this.finishedAt >= 0 && !this.paused) {
+    // the results, a moment after crossing the line, or after the race ended without us (the
+    // others finished long ago); online the room moves on, paused or not
+    if (this.finishedAt < 0 && s.phase === 'Over') this.finish(s, 'RACE OVER');
+    if (this.finishedAt >= 0 && (this.source.online || !this.paused)) {
       this.finishedAt += delta;
       if (this.finishedAt >= END_DELAY) this.end(s);
     }
@@ -258,14 +260,14 @@ export class RaceStage implements Stage {
     }
   }
 
-  private finish(s: Snapshot): void {
+  private finish(s: Snapshot, label = 'FINISH!'): void {
     this.finishedAt = 0;
     this.engine.stop();
     audio.stopMusic();
     audio.play('finish', 0.6);
     if (this.source.map.kind === 'battle') {
       this.hud.showLabel(s.order[0] === this.source.mySlot ? 'WINNER!' : 'BATTLE OVER');
-    } else this.hud.showLabel('FINISH!');
+    } else this.hud.showLabel(label);
   }
 
   private end(s: Snapshot): void {

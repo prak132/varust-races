@@ -1,6 +1,6 @@
 // The results: everyone's place and time over a slowly drifting checkered flag. After a ranked
-// race the rating change arrives a moment later; after an online race the host can start
-// another in the same room.
+// race the rating change arrives a moment later; after another online race everyone goes back
+// to the lobby once the race is over (the server's RESULTS_TIME later, or when the host says).
 import { app, type Screen } from '../app';
 import * as audio from '../audio';
 import { button, h } from '../dom';
@@ -11,6 +11,8 @@ import { net } from '../net';
 import { nav } from '../nav';
 import type { ServerMsg } from '../wasm';
 import { formatTime } from './hud';
+
+const RESULTS_TIME = 15;
 
 export class EndScreen implements Screen {
   readonly el: HTMLElement;
@@ -40,7 +42,7 @@ export class EndScreen implements Screen {
     if (ranked) this.rank.textContent = 'Working out your new rank...';
     const buttons: HTMLElement[] = [button('Main Menu', () => this.leave())];
     if (source.online && !ranked) {
-      this.again = button('Race Again', () => net.send('Rematch'));
+      this.again = button('Back to Lobby', () => net.send('Rematch'));
       buttons.unshift(this.again);
     }
     this.el = h('div.screen', null,
@@ -71,9 +73,11 @@ export class EndScreen implements Screen {
     this.flag.style.backgroundPosition = `${this.offset}px ${-this.offset}px`;
     if (this.again) {
       const host = online.lobby?.host === online.room?.slot;
-      const over = this.source.latest().phase === 'Over';
+      const latest = this.source.latest();
+      const over = latest.phase === 'Over';
       this.again.disabled = !host || !over;
-      this.again.title = !host ? 'The host starts the next race' : over ? '' : 'Waiting for everyone to finish';
+      this.again.title = !host ? 'Everyone goes back together' : over ? '' : 'Waiting for everyone to finish';
+      this.again.textContent = over ? `Back to Lobby (${Math.max(0, Math.ceil(RESULTS_TIME - latest.phase_time))})` : 'Back to Lobby';
     }
     const r = online.rankResult;
     if (r && !this.rankShown) {

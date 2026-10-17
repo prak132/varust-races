@@ -26,10 +26,10 @@ export const nav = {
     app.setStage(stage);
     app.show(new GarageScreen());
   },
-  async mapSelect(hosting: false | 'public' | 'private' = false): Promise<void> {
+  async mapSelect(): Promise<void> {
     const [{ MapSelectScreen }, stage] = await Promise.all([import('./ui/mapSelect'), driftStage()]);
     app.setStage(stage);
-    app.show(new MapSelectScreen(hosting));
+    app.show(new MapSelectScreen());
   },
   async multiplayer(): Promise<void> {
     const [{ MultiplayerScreen }, stage] = await Promise.all([import('./ui/multiplayer'), driftStage()]);

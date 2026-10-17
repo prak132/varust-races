@@ -1,5 +1,6 @@
 // End-to-end check in real Chrome against a running dev server and race server:
-// two players meet online and race, then play a soccer match.
+// two players meet in a lobby, the host picks the track and turns off the CPUs, they race,
+// then play a soccer match.
 //   node tools/e2e.mjs [http://localhost:8000] [screenshot folder]
 // Needs Google Chrome and `npm run dev` (or vite + the server) running.
 import { chromium } from 'playwright-core';
@@ -22,18 +23,24 @@ const step = (msg) => console.log(`- ${msg}`);
 
 try {
   const a = await open('A'), b = await open('B');
-  step('A hosts a public race');
+  step('A creates a public lobby');
   await click(a, 'Multiplayer');
   await a.getByText('MULTIPLAYER', { exact: true }).waitFor({ timeout: 20000 });
   await click(a, 'Public');
-  await click(a, 'Create');
-  await a.getByText('PUBLIC ROOM', { exact: false }).waitFor({ timeout: 10000 });
+  await a.getByText('PUBLIC LOBBY', { exact: false }).waitFor({ timeout: 10000 });
   step('B finds it in the list and joins');
   await click(b, 'Multiplayer');
   await b.getByRole('button', { name: 'Join' }).first().waitFor({ timeout: 10000 });
   await b.locator('.crow').filter({ hasText: 'CLASSIC' }).getByRole('button', { name: 'Join' }).click();
-  await b.getByText('PUBLIC ROOM', { exact: false }).waitFor({ timeout: 10000 });
+  await b.getByText('PUBLIC LOBBY', { exact: false }).waitFor({ timeout: 10000 });
   await a.getByText('PLAYER 2', { exact: true }).waitFor({ timeout: 5000 });
+  step('A picks the next track and turns the CPUs off; B sees both');
+  const setting = (page, name) => page.locator('.crow').filter({ hasText: name }).getByRole('button', { name: '>' });
+  await setting(a, 'TRACK').click();
+  await b.getByText('PUBLIC LOBBY / SAN FRANCISCO', { exact: true }).waitFor({ timeout: 5000 });
+  await a.getByText('PUBLIC LOBBY / SAN FRANCISCO', { exact: true }).waitFor({ timeout: 5000 });
+  await setting(a, 'CPU CARS').click();
+  await b.locator('.crow').filter({ hasText: 'CPU CARS' }).getByText('OFF', { exact: true }).waitFor({ timeout: 5000 });
   await shot(a, 'online-lobby');
   step('both ready: the flag, the countdown, GO');
   await click(a, 'Ready');
@@ -48,8 +55,8 @@ try {
   await shot(b, 'online-race-b');
   await a.keyboard.up('KeyW');
   const pos = await a.locator('.hud-screen').filter({ hasText: 'POS' }).locator('.hud-value').textContent();
-  step(`A is ${pos} in a race of ${pos?.split('/')[1]} cars (expected 5: 2 players and 3 CPUs)`);
-  if (!pos?.endsWith('/5')) throw new Error(`expected 5 cars, HUD shows ${pos}`);
+  step(`A is ${pos} in a race of ${pos?.split('/')[1]} cars (expected 2 players, no CPUs)`);
+  if (!pos?.endsWith('/2')) throw new Error(`expected 2 cars, HUD shows ${pos}`);
   void mph;
 
   step('soccer: A creates a 1v1, B joins with the code');

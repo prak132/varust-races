@@ -50,11 +50,13 @@ pub struct Settings {
     pub laps: u8,
     /// 0 easy, 1 normal, 2 hard
     pub difficulty: u8,
+    /// false races players only, no CPUs
+    pub cpus: bool,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { laps: 1, difficulty: 1 }
+        Settings { laps: 1, difficulty: 1, cpus: true }
     }
 }
 
@@ -120,7 +122,7 @@ impl RaceRoom {
             phase_time: 0.0,
             race_time: 0.0,
             tick: 0,
-            settings: Settings { laps: 1, difficulty: 1 },
+            settings: Settings::default(),
             demo: false,
             auto_start: true,
             first_finish: None,
@@ -201,10 +203,16 @@ impl RaceRoom {
     /// Adds a player with a name nobody else in the room has ("Ana", then "Ana 2"...).
     /// Returns their slot, or None if the room is full or already racing.
     pub fn add_player(&mut self, name: &str, car_number: u8) -> Option<u8> {
-        if !self.joinable() {
+        let slot = (CPUS..SLOTS).find(|&s| self.racers[s].is_none())?;
+        self.add_player_at(slot as u8, name, car_number)
+    }
+
+    /// Adds a player in a free slot of their own (one kept for them while the last race ran).
+    pub fn add_player_at(&mut self, slot: u8, name: &str, car_number: u8) -> Option<u8> {
+        let slot = slot as usize;
+        if !self.joinable() || !(CPUS..SLOTS).contains(&slot) || self.racers[slot].is_some() {
             return None;
         }
-        let slot = (CPUS..SLOTS).find(|&s| self.racers[s].is_none())?;
         let mut unique = name.to_string();
         let mut n = 2;
         while self.racers.iter().flatten().any(|r| r.name == unique) {
@@ -267,6 +275,7 @@ impl RaceRoom {
             self.settings = Settings {
                 laps: if self.map.has_laps() { settings.laps.clamp(1, 10) } else { 1 },
                 difficulty: settings.difficulty.min(2),
+                cpus: settings.cpus,
             };
         }
     }
@@ -290,7 +299,15 @@ impl RaceRoom {
         if self.phase != Phase::Lobby {
             return;
         }
-        let Settings { laps, difficulty } = self.settings;
+        let Settings { laps, difficulty, cpus } = self.settings;
+        if !cpus {
+            for i in 0..CPUS {
+                self.racers[i] = None;
+                if let Some(b) = self.battle.as_mut() {
+                    b.leave(i as u8);
+                }
+            }
+        }
         self.course.set_laps(laps);
         for r in self.racers.iter_mut().flatten() {
             if let Some(d) = r.cpu.as_mut() {
@@ -306,6 +323,18 @@ impl RaceRoom {
 
     /// Back to the lobby on the same map for another go: fresh CPUs, nobody ready.
     pub fn rematch(&mut self) {
+        self.reset(self.map);
+    }
+
+    /// the host picks another map (lobby only): everyone stays, nobody's ready
+    pub fn set_map(&mut self, map: &'static MapDef) {
+        if self.phase == Phase::Lobby {
+            self.reset(map);
+        }
+    }
+
+    /// a fresh lobby on `map` with the same players and settings
+    fn reset(&mut self, map: &'static MapDef) {
         let players: Vec<(usize, Racer)> = self
             .racers
             .iter_mut()
@@ -316,9 +345,9 @@ impl RaceRoom {
         let seed = self.rng.next_u32() as u64;
         let auto_start = self.auto_start;
         let settings = self.settings;
-        *self = RaceRoom::new(self.map, seed);
+        *self = RaceRoom::new(map, seed);
         self.auto_start = auto_start;
-        self.settings = settings;
+        self.set_settings(settings);
         for (slot, mut r) in players {
             r.ready = false;
             r.input = Input::default();
@@ -733,7 +762,7 @@ mod tests {
         for map in ["classic", "tokyo", "summit"] {
             let mut room = RaceRoom::new(maps::get(map), 11);
             room.add_player("Ana", 4).unwrap();
-            room.set_settings(Settings { laps: 2, difficulty: 1 });
+            room.set_settings(Settings { laps: 2, ..Settings::default() });
             room.start();
             let events = run(&mut room, 300.0);
             let finishes = events.iter().filter(|e| matches!(e, Event::Finish { .. })).count();
@@ -784,6 +813,25 @@ mod tests {
         assert_eq!(room.phase, Phase::Lobby);
         assert!(!room.racer(me).unwrap().ready);
         assert_eq!(room.racer(me).unwrap().car.pos, maps::player_spawn(room.map, 0).pos);
+    }
+
+    #[test]
+    fn the_host_changes_map_and_races_without_cpus() {
+        let mut room = RaceRoom::new(maps::get("classic"), 1);
+        let me = room.add_player("Ana", 4).unwrap();
+        room.set_settings(Settings { laps: 3, difficulty: 1, cpus: false });
+        room.set_map(maps::get("junkyard"));
+        assert_eq!(room.map.id, "junkyard");
+        assert_eq!(room.racer(me).unwrap().name, "Ana");
+        assert_eq!(room.settings, Settings { laps: 1, difficulty: 1, cpus: false });
+        room.set_ready(me, true);
+        assert_eq!(room.snapshot().cars.len(), 1);
+        // the next race on the same map brings no CPUs back either
+        run(&mut room, FLAG_TIME + COUNTDOWN_TIME + battle_limit());
+        assert_eq!(room.phase, Phase::Over);
+        room.rematch();
+        room.start();
+        assert_eq!(room.snapshot().cars.len(), 1);
     }
 
     #[test]

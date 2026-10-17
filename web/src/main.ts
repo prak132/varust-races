@@ -5,7 +5,8 @@ import { loadTheme } from './theme';
 import { nav } from './nav';
 
 async function boot(): Promise<void> {
-  await Promise.all([loadTheme(), loadSim()]);
+  // the menu's code comes in alongside, rather than after
+  await Promise.all([loadTheme(), loadSim(), import('./ui/menu')]);
   app.start();
   await nav.menu();
 }

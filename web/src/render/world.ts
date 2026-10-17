@@ -66,6 +66,9 @@ export class World {
   private eye = 6.3;
   private clock = 0;
   private followed: number | null = null;
+  /** the ground picture is in: drawing the world before then shows bare kerbs on the sky */
+  ready = false;
+  private readonly loaded: Promise<void>;
 
   private constructor(readonly map: MapDef, layout: { walls: Wall[]; signs: Sign[]; boxes: { x: number; y: number }[][] }) {
     this.colors = skyColors(map.id);
@@ -82,18 +85,29 @@ export class World {
     this.items = new ItemsView(layout.boxes.flat().map((p) => [p.x, p.y]));
     this.scene.add(this.items.root);
     this.setFirstPerson(false);
+    this.loaded = this.addGround().then(() => {
+      this.ready = true;
+    });
   }
 
-  /** builds a map's world (the ground picture is loaded before it's ready) */
+  /** builds a map's world now; its ground picture follows (`ready`) */
+  static start(map: MapDef): World {
+    return new World(map, mapLayout(map.id));
+  }
+
+  /** builds a map's world, waiting for its ground picture */
   static async create(map: MapDef): Promise<World> {
-    const world = new World(map, mapLayout(map.id));
-    await world.addGround();
+    const world = World.start(map);
+    await world.loaded;
     return world;
   }
 
   private async addGround(): Promise<void> {
     const map = this.map;
-    const picture = await texture(`maps/${map.id}/background.png`);
+    const [picture, grassPicture] = await Promise.all([
+      texture(`maps/${map.id}/background.png`),
+      map.scale > 1 ? null : texture('ui/grass.png'),
+    ]);
     const ground = new THREE.Group();
     const flat = (t: THREE.Texture) => new THREE.MeshBasicMaterial({ map: t, depthWrite: false, fog: true });
     const plane = (x0: number, y0: number, x1: number, y1: number, m: THREE.Material, uv?: number[]) => {
@@ -118,7 +132,7 @@ export class World {
       plane(-far, h, w + far, h + far, m, [0, v1, 1, v1, 0, v1, 1, v1]);
       plane(-far, -far, w + far, 0, m, [0, v0, 1, v0, 0, v0, 1, v0]);
     } else {
-      const grass = (await texture('ui/grass.png')).clone();
+      const grass = grassPicture!.clone();
       grass.wrapS = grass.wrapT = THREE.RepeatWrapping;
       const span = 12000;
       grass.repeat.set(span / 256, span / 256);

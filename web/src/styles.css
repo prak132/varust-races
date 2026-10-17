@@ -997,7 +997,8 @@ input.field::placeholder {
 }
 
 .picker .value {
-  width: 120px;
+  width: 170px;
+  white-space: nowrap;
   text-align: center;
   color: var(--gold);
 }

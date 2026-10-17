@@ -85,13 +85,16 @@ async fn two_players_race() {
     assert_eq!(lobby.host, Some(a_slot));
     assert_eq!(lobby.players[1].name, "Player 2");
 
-    // the host sets 2 laps; a guest can't change them
-    a.send(ClientMsg::Settings(sim::room::Settings { laps: 2, difficulty: 2 })).await;
-    b.send(ClientMsg::Settings(sim::room::Settings { laps: 5, difficulty: 0 })).await;
+    // the host picks the map, 2 laps and no CPUs; a guest can't change them
+    b.send(ClientMsg::Map("paris".into())).await;
+    a.send(ClientMsg::Map("london".into())).await;
+    b.until(|m| match m { ServerMsg::Lobby(l) if l.map == "london" => Some(()), _ => None }).await;
+    a.send(ClientMsg::Settings(sim::room::Settings { laps: 2, difficulty: 2, cpus: false })).await;
+    b.send(ClientMsg::Settings(sim::room::Settings { laps: 5, difficulty: 0, cpus: true })).await;
     a.send(ClientMsg::Ready(true)).await;
     b.send(ClientMsg::Ready(true)).await;
-    let settings = a.until(|m| match m { ServerMsg::Lobby(l) if l.players.iter().all(|p| p.ready) => Some(l.settings), _ => None }).await;
-    assert_eq!(settings.laps, 2);
+    let lobby = a.until(|m| match m { ServerMsg::Lobby(l) if l.players.iter().all(|p| p.ready) => Some(l.clone()), _ => None }).await;
+    assert_eq!((lobby.map.as_str(), lobby.settings.laps, lobby.settings.cpus), ("london", 2, false));
 
     // wait for GO, then hold the gas
     a.until(|m| match m { ServerMsg::Race { snapshot, .. } if snapshot.phase == Phase::Racing => Some(()), _ => None }).await;
@@ -107,9 +110,43 @@ async fn two_players_race() {
     assert!(pos.dist(start) > 50.0, "the car drove {} px", pos.dist(start));
     assert!(ack <= a.seq);
 
-    // a player leaving mid-race disappears from the race
+    // a player leaving mid-race disappears from the race (and there are no CPUs)
     b.send(ClientMsg::Leave).await;
-    a.until(|m| match m { ServerMsg::Race { snapshot, .. } if snapshot.cars.len() == 4 => Some(()), _ => None }).await;
+    a.until(|m| match m { ServerMsg::Race { snapshot, .. } if snapshot.cars.len() == 1 => Some(()), _ => None }).await;
+}
+
+#[tokio::test]
+async fn late_joiners_wait_for_the_next_race() {
+    let url = start_server().await;
+    let mut a = Client::connect(&url).await;
+    let mut b = Client::connect(&url).await;
+    a.send(ClientMsg::Create { visibility: Visibility::Private, map: "classic".into(), car: 1 }).await;
+    let code = a.until(|m| match m { ServerMsg::Joined { code, .. } => Some(code.clone()), _ => None }).await;
+    b.send(ClientMsg::Join { code: code.clone(), car: 2 }).await;
+    b.until(|m| matches!(m, ServerMsg::Joined { .. }).then_some(())).await;
+    a.until(|m| match m { ServerMsg::Lobby(l) if l.players.len() == 2 => Some(()), _ => None }).await;
+    a.send(ClientMsg::Ready(true)).await;
+    b.send(ClientMsg::Ready(true)).await;
+    a.until(|m| match m { ServerMsg::Race { snapshot, .. } if snapshot.phase == Phase::Racing => Some(()), _ => None }).await;
+
+    // C joins mid-race: in the lobby, waiting, and not sent the race
+    let mut c = Client::connect(&url).await;
+    c.send(ClientMsg::Join { code, car: 3 }).await;
+    let c_slot = c.until(|m| match m { ServerMsg::Joined { slot, .. } => Some(*slot), _ => None }).await;
+    let lobby = c.until(|m| match m { ServerMsg::Lobby(l) => Some(l.clone()), _ => None }).await;
+    let waiting: Vec<bool> = lobby.players.iter().map(|p| p.waiting).collect();
+    assert_eq!(waiting, [false, false, true]);
+    assert_eq!(lobby.players[2].slot, c_slot);
+
+    // the racers leave: the race is over and C is in the lobby, hosting it
+    a.send(ClientMsg::Leave).await;
+    b.send(ClientMsg::Leave).await;
+    let lobby = c.until(|m| match m {
+        ServerMsg::Race { .. } => panic!("a late joiner was sent the race"),
+        ServerMsg::Lobby(l) if l.players.len() == 1 && !l.players[0].waiting => Some(l.clone()),
+        _ => None,
+    }).await;
+    assert_eq!(lobby.host, Some(c_slot));
 }
 
 #[tokio::test]

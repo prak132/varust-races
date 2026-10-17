@@ -27,8 +27,9 @@ export class TitleStage implements Stage {
     w.setCars(this.now.cars.map((c) => ({ slot: c.slot, sprite: spriteFor(c.slot, 0, undefined, true) })), false);
   }
 
-  static async create(): Promise<TitleStage> {
-    return new TitleStage(await World.create(mapById('classic')));
+  /** ready at once; the picture shows when its ground is in (the menu doesn't wait for it) */
+  static create(): TitleStage {
+    return new TitleStage(World.start(mapById('classic')));
   }
 
   frame(delta: number): void {
@@ -48,8 +49,8 @@ export class TitleStage implements Stage {
     this.w.update({ cars, items: NO_ITEMS, follow: null, shake: 0 }, delta);
   }
 
-  view(): World {
-    return this.w;
+  view(): World | null {
+    return this.w.ready ? this.w : null;
   }
 
   dispose(): void {
@@ -66,8 +67,8 @@ let drift = { x: 1000, y: 500, dx: (Math.random() < 0.5 ? -1 : 1) * SPEED_X, dy:
 export class DriftStage implements Stage {
   private constructor(private readonly w: World) {}
 
-  static async create(mapId = 'classic'): Promise<DriftStage> {
-    return new DriftStage(await World.create(mapById(mapId)));
+  static create(mapId = 'classic'): DriftStage {
+    return new DriftStage(World.start(mapById(mapId)));
   }
 
   get mapId(): string {
@@ -88,8 +89,8 @@ export class DriftStage implements Stage {
     this.w.update({ cars: [], items: NO_ITEMS, follow: null, shake: 0 }, delta);
   }
 
-  view(): World {
-    return this.w;
+  view(): World | null {
+    return this.w.ready ? this.w : null;
   }
 
   dispose(): void {
